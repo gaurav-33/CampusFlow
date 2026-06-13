@@ -1,0 +1,28 @@
+# Dependencies
+node_modules/
+.aws-sam/
+
+# Environment
+.env
+.env.local
+
+# SAM build artifacts
+.aws-sam/
+
+# AWS credentials (never commit)
+.aws/
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Test coverage
+coverage/

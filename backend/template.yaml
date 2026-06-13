@@ -1,0 +1,435 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+
+Description: >
+  CampusFlow — AI OS for Student Life
+  Serverless backend on AWS SAM (ap-south-1)
+  Stack: Lambda (Node 20) + API Gateway + DynamoDB + SQS + Bedrock (Claude 3 Sonnet)
+
+# ── Global Lambda Defaults ────────────────────────────────────────────────────
+Globals:
+  Function:
+    Runtime: nodejs20.x
+    Architectures:
+      - arm64           # Graviton2 — cheaper + faster for Node.js workloads
+    MemorySize: 256
+    Timeout: 30
+    Environment:
+      Variables:
+        AWS_ACCOUNT_ID: !Ref AWS::AccountId
+        AWS_REGION_NAME: !Ref AWS::Region
+        DYNAMODB_TABLE_NAME: !Ref CampusFlowTable
+        SQS_QUEUE_URL: !Ref BedrockProcessingQueue
+        BEDROCK_MODEL_ID: anthropic.claude-3-sonnet-20240229-v1:0
+        BEDROCK_REGION: ap-south-1
+        JWT_SECRET: !Ref JwtSecret
+        JWT_EXPIRES_IN: 24h
+        NODE_ENV: production
+        LOG_LEVEL: info
+    # Use ES Modules
+    Handler: index.handler
+
+# ── Parameters ────────────────────────────────────────────────────────────────
+Parameters:
+  JwtSecret:
+    Type: String
+    Description: >
+      Strong random secret for JWT signing (min 64 chars).
+      Generate: node -e "console.log(require('crypto').randomBytes(64).toString('hex'))"
+    MinLength: 32
+    NoEcho: true   # Never shown in CloudFormation console
+
+  Environment:
+    Type: String
+    Default: prod
+    AllowedValues: [dev, staging, prod]
+    Description: Deployment environment
+
+# ── Resources ─────────────────────────────────────────────────────────────────
+Resources:
+
+  # ── DynamoDB: Single Table ──────────────────────────────────────────────────
+  CampusFlowTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain    # Protect data on stack deletion
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: CampusFlowData
+      BillingMode: PAY_PER_REQUEST   # On-demand — no capacity planning needed
+      TableClass: STANDARD
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      SSESpecification:
+        SSEEnabled: true             # Encryption at rest (AWS managed key)
+      AttributeDefinitions:
+        - AttributeName: PK
+          AttributeType: S
+        - AttributeName: SK
+          AttributeType: S
+        # GSI keys for future urgency-based queries
+        - AttributeName: GSI1PK
+          AttributeType: S
+        - AttributeName: GSI1SK
+          AttributeType: S
+      KeySchema:
+        - AttributeName: PK
+          KeyType: HASH
+        - AttributeName: SK
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: GSI1-UrgencyIndex
+          KeySchema:
+            - AttributeName: GSI1PK
+              KeyType: HASH
+            - AttributeName: GSI1SK
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      Tags:
+        - Key: Project
+          Value: CampusFlow
+        - Key: Environment
+          Value: !Ref Environment
+
+  # ── SQS: Bedrock Processing Queue ──────────────────────────────────────────
+  BedrockProcessingQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: BedrockProcessingQueue
+      VisibilityTimeout: 300        # 5 minutes (must be >= Lambda timeout × 6)
+      MessageRetentionPeriod: 86400 # 1 day
+      ReceiveMessageWaitTimeSeconds: 20  # Long polling
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt BedrockDLQ.Arn
+        maxReceiveCount: 3          # After 3 failures → DLQ
+      Tags:
+        - Key: Project
+          Value: CampusFlow
+
+  # ── SQS: Dead Letter Queue for failed Bedrock jobs ─────────────────────────
+  BedrockDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: BedrockProcessingDLQ
+      MessageRetentionPeriod: 1209600  # 14 days — time to investigate failures
+      Tags:
+        - Key: Project
+          Value: CampusFlow
+
+  # ── IAM: Shared Lambda Execution Role ──────────────────────────────────────
+  CampusFlowLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub CampusFlowLambdaRole-${Environment}
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DynamoDBAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:Query
+                  - dynamodb:BatchWriteItem
+                Resource:
+                  - !GetAtt CampusFlowTable.Arn
+                  - !Sub '${CampusFlowTable.Arn}/index/*'
+
+        - PolicyName: SQSAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sqs:SendMessage
+                  - sqs:ReceiveMessage
+                  - sqs:DeleteMessage
+                  - sqs:GetQueueAttributes
+                  - sqs:ChangeMessageVisibility
+                Resource:
+                  - !GetAtt BedrockProcessingQueue.Arn
+                  - !GetAtt BedrockDLQ.Arn
+
+        - PolicyName: BedrockInvokeModel
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                Resource:
+                  - 'arn:aws:bedrock:*::foundation-model/anthropic.claude-3-sonnet*'
+
+        - PolicyName: CloudWatchLogs
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: 'arn:aws:logs:*:*:*'
+
+  # ── API Gateway: HTTP API ───────────────────────────────────────────────────
+  CampusFlowApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      StageName: !Ref Environment
+      Description: CampusFlow REST API
+      CorsConfiguration:
+        AllowOrigins:
+          - '*'
+        AllowHeaders:
+          - Authorization
+          - Content-Type
+        AllowMethods:
+          - GET
+          - POST
+          - OPTIONS
+        MaxAge: 600
+      Auth:
+        Authorizers:
+          JwtTokenAuthorizer:
+            FunctionArn: !GetAtt JwtAuthorizerFunction.Arn
+            AuthorizerPayloadFormatVersion: '2.0'
+            EnableSimpleResponses: true
+            AuthorizerResultTtlInSeconds: 300
+            Identity:
+              Headers:
+                - Authorization
+        DefaultAuthorizer: JwtTokenAuthorizer
+
+  # ── Lambda: JWT Authorizer ──────────────────────────────────────────────────
+  JwtAuthorizerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub CampusFlow-JwtAuthorizer-${Environment}
+      CodeUri: ./
+      Handler: jwtAuthorizer.handler
+      Role: !GetAtt CampusFlowLambdaRole.Arn
+      Description: API Gateway Lambda Authorizer — validates JWT Bearer tokens
+      MemorySize: 128   # Minimal memory — only does JWT verification
+      Timeout: 5
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Format: cjs
+        OutExtension:
+          - .js=.cjs
+        Target: es2022
+        Sourcemap: false
+        EntryPoints:
+          - src/handlers/jwtAuthorizer.js
+        External:
+          - '@aws-sdk/*'
+
+  # Allow API Gateway to invoke the JWT Authorizer
+  JwtAuthorizerPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt JwtAuthorizerFunction.Arn
+      Principal: apigateway.amazonaws.com
+
+  # ── Lambda: Auth (Register + Login) ────────────────────────────────────────
+  AuthFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub CampusFlow-Auth-${Environment}
+      CodeUri: ./
+      Handler: authHandler.handler
+      Role: !GetAtt CampusFlowLambdaRole.Arn
+      Description: Handles student registration and login — returns JWT
+      Events:
+        RegisterEvent:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CampusFlowApi
+            Method: POST
+            Path: /api/auth/register
+            Auth:
+              Authorizer: NONE    # Public route — no JWT required
+        LoginEvent:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CampusFlowApi
+            Method: POST
+            Path: /api/auth/login
+            Auth:
+              Authorizer: NONE    # Public route — no JWT required
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Format: cjs
+        OutExtension:
+          - .js=.cjs
+        Target: es2022
+        Sourcemap: false
+        EntryPoints:
+          - src/handlers/authHandler.js
+        External:
+          - '@aws-sdk/*'
+
+  # ── Lambda: Ingest Clipboard ────────────────────────────────────────────────
+  IngestClipboardFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub CampusFlow-IngestClipboard-${Environment}
+      CodeUri: ./
+      Handler: ingestClipboard.handler
+      Role: !GetAtt CampusFlowLambdaRole.Arn
+      Description: Receives raw text, saves to DynamoDB staging, pushes to SQS
+      Events:
+        IngestEvent:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CampusFlowApi
+            Method: POST
+            Path: /api/ingest
+            # DefaultAuthorizer (JwtTokenAuthorizer) applies automatically
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Format: cjs
+        OutExtension:
+          - .js=.cjs
+        Target: es2022
+        Sourcemap: false
+        EntryPoints:
+          - src/handlers/ingestClipboard.js
+        External:
+          - '@aws-sdk/*'
+
+  # ── Lambda: Get Dashboard ───────────────────────────────────────────────────
+  GetDashboardFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub CampusFlow-GetDashboard-${Environment}
+      CodeUri: ./
+      Handler: getDashboard.handler
+      Role: !GetAtt CampusFlowLambdaRole.Arn
+      Description: Fetches all student events + computes hybrid health score
+      Events:
+        DashboardEvent:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CampusFlowApi
+            Method: GET
+            Path: /api/dashboard
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Format: cjs
+        OutExtension:
+          - .js=.cjs
+        Target: es2022
+        Sourcemap: false
+        EntryPoints:
+          - src/handlers/getDashboard.js
+        External:
+          - '@aws-sdk/*'
+
+  # ── Lambda: Get Event Detail ────────────────────────────────────────────────
+  GetEventDetailFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub CampusFlow-GetEventDetail-${Environment}
+      CodeUri: ./
+      Handler: getEventDetail.handler
+      Role: !GetAtt CampusFlowLambdaRole.Arn
+      Description: Fetches a single event by ID for the Event Detail screen
+      Events:
+        EventDetailEvent:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CampusFlowApi
+            Method: GET
+            Path: /api/events/{eventId}
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Format: cjs
+        OutExtension:
+          - .js=.cjs
+        Target: es2022
+        Sourcemap: false
+        EntryPoints:
+          - src/handlers/getEventDetail.js
+        External:
+          - '@aws-sdk/*'
+
+  # ── Lambda: SQS Batch Processor (Bedrock) ──────────────────────────────────
+  ProcessSqsBatchFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub CampusFlow-ProcessSqsBatch-${Environment}
+      CodeUri: ./
+      Handler: processSqsBatch.handler
+      Role: !GetAtt CampusFlowLambdaRole.Arn
+      Description: SQS consumer — calls Bedrock Claude to extract events, writes to DynamoDB
+      MemorySize: 512   # More memory for Bedrock payload processing
+      Timeout: 120      # 2 minutes — Bedrock can take time on large batches
+      Events:
+        SqsTrigger:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt BedrockProcessingQueue.Arn
+            BatchSize: 5
+            MaximumBatchingWindowInSeconds: 30
+            FunctionResponseTypes:
+              - ReportBatchItemFailures   # Partial batch failure support
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Format: cjs
+        OutExtension:
+          - .js=.cjs
+        Target: es2022
+        Sourcemap: false
+        EntryPoints:
+          - src/handlers/processSqsBatch.js
+        External:
+          - '@aws-sdk/*'
+
+# ── Outputs ───────────────────────────────────────────────────────────────────
+Outputs:
+  ApiBaseUrl:
+    Description: CampusFlow API Gateway base URL
+    Value: !Sub 'https://${CampusFlowApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}'
+    Export:
+      Name: !Sub CampusFlow-ApiBaseUrl-${Environment}
+
+  DynamoTableName:
+    Description: DynamoDB table name
+    Value: !Ref CampusFlowTable
+    Export:
+      Name: !Sub CampusFlow-TableName-${Environment}
+
+  SqsQueueUrl:
+    Description: SQS BedrockProcessingQueue URL
+    Value: !Ref BedrockProcessingQueue
+    Export:
+      Name: !Sub CampusFlow-SqsQueueUrl-${Environment}
+
+  DLQUrl:
+    Description: Dead Letter Queue URL (monitor for failed Bedrock jobs)
+    Value: !Ref BedrockDLQ
+    Export:
+      Name: !Sub CampusFlow-DLQUrl-${Environment}
+
+  JwtAuthorizerFunctionArn:
+    Description: JWT Lambda Authorizer ARN
+    Value: !GetAtt JwtAuthorizerFunction.Arn

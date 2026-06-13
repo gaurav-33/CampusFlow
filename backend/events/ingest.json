@@ -1,0 +1,15 @@
+{
+  "body": "{\"rawText\": \"Midterm is pushed to Friday 5PM. Also, the Data Structures assignment submission deadline is tomorrow midnight. Don't miss the Placement drive registration by Sunday 11:59 PM.\", \"source\": \"CLIPBOARD\"}",
+  "headers": {
+    "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.TEST_TOKEN_REPLACE_ME",
+    "Content-Type": "application/json"
+  },
+  "requestContext": {
+    "authorizer": {
+      "studentId": "STUDENT#123",
+      "name": "Rohan Sharma"
+    }
+  },
+  "httpMethod": "POST",
+  "path": "/api/ingest"
+}

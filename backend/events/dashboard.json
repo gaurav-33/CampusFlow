@@ -1,0 +1,16 @@
+{
+  "queryStringParameters": {
+    "studentId": "123"
+  },
+  "headers": {
+    "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.TEST_TOKEN_REPLACE_ME"
+  },
+  "requestContext": {
+    "authorizer": {
+      "studentId": "STUDENT#123",
+      "name": "Rohan Sharma"
+    }
+  },
+  "httpMethod": "GET",
+  "path": "/api/dashboard"
+}

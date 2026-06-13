@@ -1,0 +1,8 @@
+{
+  "body": "{\"studentId\": \"123\", \"name\": \"Rohan Sharma\", \"password\": \"SecurePassword123!\"}",
+  "headers": {
+    "Content-Type": "application/json"
+  },
+  "httpMethod": "POST",
+  "path": "/api/auth/register"
+}

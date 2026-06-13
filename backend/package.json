@@ -1,0 +1,36 @@
+{
+  "name": "campusflow-backend",
+  "version": "1.0.0",
+  "description": "CampusFlow — AI OS for Student Life | Serverless Backend",
+  "type": "module",
+  "main": "src/handlers/ingestClipboard.js",
+  "engines": {
+    "node": ">=20.x"
+  },
+  "scripts": {
+    "build": "sam build",
+    "deploy": "sam deploy --guided",
+    "deploy:fast": "sam build && sam deploy",
+    "local:ingest": "sam local invoke IngestClipboardFunction --event events/ingest.json",
+    "local:dashboard": "sam local invoke GetDashboardFunction --event events/dashboard.json",
+    "local:auth-register": "sam local invoke AuthFunction --event events/auth-register.json",
+    "local:api": "sam local start-api --port 3001",
+    "test": "node --test src/**/*.test.js",
+    "lint": "eslint src/"
+  },
+  "dependencies": {
+    "@aws-sdk/client-bedrock-runtime": "^3.600.0",
+    "@aws-sdk/client-dynamodb": "^3.600.0",
+    "@aws-sdk/client-sqs": "^3.600.0",
+    "@aws-sdk/lib-dynamodb": "^3.600.0",
+    "bcryptjs": "^2.4.3",
+    "jsonwebtoken": "^9.0.2",
+    "uuid": "^10.0.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.1",
+    "eslint": "^8.57.0"
+  },
+  "author": "CampusFlow Team",
+  "license": "MIT"
+}
