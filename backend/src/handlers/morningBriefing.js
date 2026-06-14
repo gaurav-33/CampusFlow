@@ -117,6 +117,33 @@ async function generateStudentBriefing(rawId, today) {
   // ── Write BRIEFING# record ──────────────────────────────────────────────────
   await putBriefing(rawId, today, briefingText);
   console.info(`[MorningBriefing] Briefing written for ${rawId} on ${today}`);
+
+  // ── Send push notification via Expo ─────────────────────────────────────────
+  if (profile.expoPushToken) {
+    try {
+      const response = await fetch('https://exp.host/--/api/v2/push/send', {
+        method: 'POST',
+        headers: {
+          Accept: 'application/json',
+          'Accept-encoding': 'gzip, deflate',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          to: profile.expoPushToken,
+          sound: 'default',
+          title: 'CampusFlow Briefing',
+          body: briefingText,
+          data: { type: 'briefing' },
+        }),
+      });
+      const data = await response.json();
+      console.info(`[MorningBriefing] Push notification sent for ${rawId}:`, data);
+    } catch (err) {
+      console.error("[MorningBriefing] Expo push publish failed:", err.message);
+    }
+  } else {
+    console.info(`[MorningBriefing] No expoPushToken for ${rawId} — skipping push`);
+  }
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────

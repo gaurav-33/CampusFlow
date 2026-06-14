@@ -12,7 +12,7 @@
  *  7. Recompute health score and update PROFILE
  */
 
-import { SNSClient, PublishCommand } from "@aws-sdk/client-sns";
+// import { SNSClient, PublishCommand } from "@aws-sdk/client-sns";
 import { generateNudge } from "../services/aiService.js";
 import {
   getStudentData,
@@ -22,9 +22,8 @@ import {
 } from "../services/dynamoService.js";
 import { computeHealthScore } from "../utils/healthScoreCalc.js";
 
-const sns = new SNSClient({ region: process.env.AWS_REGION || "ap-south-1" });
-
-const SNS_TOPIC_ARN = process.env.SNS_TOPIC_ARN;
+// const sns = new SNSClient({ region: process.env.AWS_REGION || "ap-south-1" });
+// const SNS_TOPIC_ARN = process.env.SNS_TOPIC_ARN;
 
 // ── Rule Definitions ──────────────────────────────────────────────────────────
 // Each rule returns true if a nudge should fire for this event.
@@ -134,24 +133,28 @@ async function processStreamRecord(record) {
       console.error("[RuleEngine] Failed to write NUDGE# record:", err.message);
     }
 
-    // Send push notification via SNS
-    if (profile.expoPushToken && SNS_TOPIC_ARN) {
+    // Send push notification via Expo
+    if (profile.expoPushToken) {
       try {
-        await sns.send(
-          new PublishCommand({
-            TopicArn: SNS_TOPIC_ARN,
-            Message: JSON.stringify({
-              token: profile.expoPushToken,
-              title: "CampusFlow",
-              body: nudgeText,
-              data: { eventType: ev.type, urgency: ev.urgency },
-            }),
-            Subject: "CampusFlow Nudge",
-          })
-        );
-        console.info(`[RuleEngine] Push notification sent for ${rawId}`);
+        const response = await fetch('https://exp.host/--/api/v2/push/send', {
+          method: 'POST',
+          headers: {
+            Accept: 'application/json',
+            'Accept-encoding': 'gzip, deflate',
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            to: profile.expoPushToken,
+            sound: 'default',
+            title: 'CampusFlow Nudge',
+            body: nudgeText,
+            data: { eventType: ev.type, urgency: ev.urgency },
+          }),
+        });
+        const data = await response.json();
+        console.info(`[RuleEngine] Push notification sent for ${rawId}:`, data);
       } catch (err) {
-        console.error("[RuleEngine] SNS publish failed:", err.message);
+        console.error("[RuleEngine] Expo push publish failed:", err.message);
         // Non-fatal — nudge record is already written
       }
     } else {
