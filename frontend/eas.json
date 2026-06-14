@@ -1,0 +1,33 @@
+{
+  "cli": {
+    "version": ">= 10.2.0",
+    "appVersionSource": "local"
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://ks1qk7dsne.execute-api.ap-south-1.amazonaws.com/dev/api"
+      }
+    },
+    "preview": {
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://ks1qk7dsne.execute-api.ap-south-1.amazonaws.com/dev/api"
+      }
+    },
+    "production": {
+      "distribution": "store",
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://ks1qk7dsne.execute-api.ap-south-1.amazonaws.com/dev/api"
+      }
+    }
+  },
+  "submit": {
+    "production": {}
+  }
+}

@@ -3,9 +3,19 @@ import { View, Text, TouchableOpacity, ActivityIndicator, StyleSheet, Platform, 
 import { MaterialIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import * as Device from 'expo-device';
-import * as Notifications from 'expo-notifications';
-import Constants from 'expo-constants';
+import Constants, { ExecutionEnvironment } from 'expo-constants';
 import { useStore } from '../../src/core/store/useStore';
+
+// Only require expo-notifications if not in Expo Go to avoid auto-registration crashes
+const isExpoGo = Constants.executionEnvironment === ExecutionEnvironment.StoreClient;
+let Notifications: any = null;
+if (!isExpoGo) {
+  try {
+    Notifications = require('expo-notifications');
+  } catch (e) {
+    console.warn('Failed to load expo-notifications', e);
+  }
+}
 
 export default function PushScreen() {
   const { updateProfile } = useStore();
@@ -15,10 +25,20 @@ export default function PushScreen() {
   const requestPermission = async () => {
     setIsLoading(true);
     try {
+      if (isExpoGo) {
+        Alert.alert('Expo Go Detected', 'Push Notifications on SDK 53+ require a Development Build. Bypassing for now!');
+        await updateProfile({ expoPushToken: 'skipped' });
+        return;
+      }
+
       if (!Device.isDevice) {
         Alert.alert('Emulator Detected', 'Push Notifications require a physical device. Proceeding without push token.');
         await updateProfile({ expoPushToken: 'skipped' });
         return;
+      }
+
+      if (!Notifications) {
+        throw new Error("Notifications module not loaded");
       }
 
       const { status: existingStatus } = await Notifications.getPermissionsAsync();

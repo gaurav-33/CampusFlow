@@ -19,3 +19,10 @@ export const clearStorage = async () => {
   await SecureStore.deleteItemAsync(TOKEN_KEY);
   await SecureStore.deleteItemAsync(STUDENT_KEY);
 };
+
+const ONBOARDING_KEY = 'campusflow_onboarding_seen';
+export const setHasSeenOnboarding = () => SecureStore.setItemAsync(ONBOARDING_KEY, 'true');
+export const getHasSeenOnboarding = async () => {
+  const val = await SecureStore.getItemAsync(ONBOARDING_KEY);
+  return val === 'true';
+};

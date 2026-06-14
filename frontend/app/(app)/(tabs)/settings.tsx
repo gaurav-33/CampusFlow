@@ -7,6 +7,18 @@ import { useStore } from '../../../src/core/store/useStore';
 import client from '../../../src/core/api/client';
 import { useRouter } from 'expo-router';
 import { theme } from '../../../src/core/theme';
+import Constants, { ExecutionEnvironment } from 'expo-constants';
+import * as Device from 'expo-device';
+
+const isExpoGo = Constants.executionEnvironment === ExecutionEnvironment.StoreClient;
+let Notifications: any = null;
+if (!isExpoGo) {
+  try {
+    Notifications = require('expo-notifications');
+  } catch (e) {
+    console.warn('Failed to load expo-notifications', e);
+  }
+}
 
 export default function SettingsScreen() {
   const router = useRouter();
@@ -183,10 +195,46 @@ export default function SettingsScreen() {
             onValueChange={async (val) => {
               setPushEnabled(val);
               try {
-                await updateProfile({ expoPushToken: val ? 'ExponentPushToken[dummy]' : 'skipped' });
-              } catch (e) {
+                if (!val) {
+                  await updateProfile({ expoPushToken: 'skipped' });
+                  return;
+                }
+
+                // If turning ON:
+                if (isExpoGo) {
+                  Alert.alert('Expo Go Detected', 'Push Notifications require a Custom/Native Build. Bypassing token generation.');
+                  await updateProfile({ expoPushToken: 'skipped' });
+                  return;
+                }
+                if (!Device.isDevice) {
+                  Alert.alert('Emulator Detected', 'Push Notifications require a physical device.');
+                  setPushEnabled(false);
+                  return;
+                }
+                if (!Notifications) throw new Error("Notifications module not loaded");
+
+                const { status: existingStatus } = await Notifications.getPermissionsAsync();
+                let finalStatus = existingStatus;
+                if (existingStatus !== 'granted') {
+                  const { status } = await Notifications.requestPermissionsAsync();
+                  finalStatus = status;
+                }
+
+                if (finalStatus !== 'granted') {
+                  Alert.alert('Permission Denied', 'Please enable notifications in your phone Settings.');
+                  setPushEnabled(false);
+                  await updateProfile({ expoPushToken: 'skipped' });
+                  return;
+                }
+
+                const projectId = Constants?.expoConfig?.extra?.eas?.projectId ?? Constants?.easConfig?.projectId;
+                const tokenData = await Notifications.getExpoPushTokenAsync({ projectId });
+                await updateProfile({ expoPushToken: tokenData.data });
+                
+              } catch (e: any) {
                 console.error(e);
-                setPushEnabled(!val); // revert on failure
+                Alert.alert('Error', e.message || 'Failed to enable notifications');
+                setPushEnabled(false);
               }
             }}
             trackColor={{ false: theme.colors.outlineVariant, true: theme.colors.primary }}
@@ -207,13 +255,13 @@ export default function SettingsScreen() {
       </TouchableOpacity>
 
       <TouchableOpacity 
+        style={[styles.actionButton, styles.logoutButton]} 
         onPress={async () => {
           await logout();
-        }} 
-        style={[styles.actionButton, styles.logoutButton]}
+        }}
       >
-        <MaterialIcons name="logout" size={24} color="#ba1a1a" />
-        <Text style={[styles.actionText, { color: '#ba1a1a' }]}>Sign Out</Text>
+        <MaterialIcons name="logout" size={24} color={theme.colors.error} />
+        <Text style={[styles.actionText, { color: theme.colors.error }]}>Log Out</Text>
       </TouchableOpacity>
     </ScrollView>
   );

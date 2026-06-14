@@ -6,6 +6,12 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#101030",
+      "imageWidth": 578
+    },
     "userInterfaceStyle": "light",
     "ios": {
       "bundleIdentifier": "com.campusflow.app",
@@ -13,11 +19,10 @@
     },
     "android": {
       "package": "com.campusflow.app",
+      "googleServicesFile": "./google-services.json",
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/android-icon-foreground.png",
-        "backgroundImage": "./assets/android-icon-background.png",
-        "monochromeImage": "./assets/android-icon-monochrome.png"
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#101030"
       },
       "predictiveBackGestureEnabled": false
     },
@@ -32,7 +37,13 @@
             "bundleId": "com.campusflow.app.ShareExtension"
           }
         }
-      ]
-    ]
+      ],
+      "expo-font"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "f4a35a0a-7771-40c0-93b7-844d26bbfbc4"
+      }
+    }
   }
 }

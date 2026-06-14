@@ -6,7 +6,7 @@ import { useClipboardHook } from '../src/hooks/useClipboardHook';
 import { useShareIntent } from 'expo-share-intent';
 
 export default function RootLayout() {
-  const { isAuthenticated, profile, events, restoreSession, ingestText } = useStore();
+  const { isAuthenticated, profile, events, restoreSession, ingestText, hasSeenOnboarding } = useStore();
   const { hasShareIntent, shareIntent, resetShareIntent } = useShareIntent();
   useClipboardHook();
   const segments = useSegments() as string[];
@@ -19,10 +19,10 @@ export default function RootLayout() {
 
   // Handle incoming OS Share Intents
   useEffect(() => {
-    if (hasShareIntent && shareIntent.value && isAuthenticated) {
-      // Check if it's text (could be a web URL or pure text)
-      if (shareIntent.type === 'text' || typeof shareIntent.value === 'string') {
-        ingestText(shareIntent.value, 'SHARE_TARGET');
+    if (hasShareIntent && isAuthenticated) {
+      const content = shareIntent.text || shareIntent.webUrl;
+      if (content) {
+        ingestText(content, 'SHARE_TARGET');
         resetShareIntent();
       }
     }
@@ -36,26 +36,31 @@ export default function RootLayout() {
     const inOnboardGroup = currentSegment === 'onboard';
 
     if (!isAuthenticated) {
-      if (inAuthGroup || inOnboardGroup) router.replace('/');
+      if (!hasSeenOnboarding && currentSegment !== 'onboard') {
+        router.replace('/onboard');
+      } else if (hasSeenOnboarding && (inAuthGroup || inOnboardGroup)) {
+        router.replace('/');
+      }
     } else {
       // User is authenticated, wait for dashboard fetch to populate profile
       if (!profile && !events.length) return;
       
-      const hasPushToken = profile?.expoPushToken;
+      const hasPushToken = profile?.expoPushToken && profile.expoPushToken !== 'ExponentPushToken[dummy]' && profile.expoPushToken !== 'ExponentPushToken[dummy-token-for-dev]';
       const hasEvents = events && events.length > 0;
       const hasOnboardedFlag = profile?.onboarded;
 
       const isFullyOnboarded = hasEvents || hasOnboardedFlag;
 
-      if (!hasPushToken && segments[0] !== 'onboard') {
-        router.replace('/onboard');
+      // Note: we use /onboard/push and /onboard/upload after auth
+      if (!hasPushToken && segments[1] !== 'push' && segments[0] !== '(app)') {
+        router.replace('/onboard/push');
       } else if (hasPushToken && !isFullyOnboarded && segments[1] !== 'upload' && segments[0] !== '(app)') {
         router.replace('/onboard/upload');
       } else if (hasPushToken && isFullyOnboarded && !inAuthGroup) {
         router.replace('/(app)');
       }
     }
-  }, [isAuthenticated, profile, events, segments, isReady]);
+  }, [isAuthenticated, profile, events, segments, isReady, hasSeenOnboarding]);
 
   if (!isReady) {
     return (

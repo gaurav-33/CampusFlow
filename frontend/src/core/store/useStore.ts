@@ -73,6 +73,8 @@ interface Store {
   clearIngestStatus: () => void;
   markEventDone: (eventSk: string) => Promise<void>;
   updateProfileMeta: (college: string, branch: string, year: string) => Promise<void>;
+  hasSeenOnboarding: boolean;
+  completeOnboarding: () => Promise<void>;
 }
 
 export const useStore = create<Store>((set, get) => ({
@@ -90,6 +92,7 @@ export const useStore = create<Store>((set, get) => ({
   isAuthenticated: false,
   studentId: '',
   studentName: '',
+  hasSeenOnboarding: false,
 
   login: async (studentId, password) => {
     set({ isLoading: true });
@@ -120,17 +123,31 @@ export const useStore = create<Store>((set, get) => ({
   },
 
   logout: async () => {
+    try {
+      await clearStorage();
+    } catch (e) {
+      console.error('[Store] clearStorage failed:', e);
+    }
     set({ isAuthenticated: false, profile: null, events: [], completedEvents: [], nudges: [], briefing: null, healthScore: null, lastFetched: null, studentId: '', studentName: '' });
-    clearStorage().catch(e => console.error('[Store] clearStorage failed:', e));
   },
 
   restoreSession: async () => {
+    const { getHasSeenOnboarding } = await import('../utils/storage');
+    const seen = await getHasSeenOnboarding();
     const token = await getToken();
     const student = await getStudent();
     if (token && student) {
-      set({ isAuthenticated: true, studentId: student.studentId, studentName: student.name });
+      set({ isAuthenticated: true, studentId: student.studentId, studentName: student.name, hasSeenOnboarding: seen });
       await get().fetchDashboard();
+    } else {
+      set({ hasSeenOnboarding: seen });
     }
+  },
+
+  completeOnboarding: async () => {
+    const { setHasSeenOnboarding } = await import('../utils/storage');
+    await setHasSeenOnboarding();
+    set({ hasSeenOnboarding: true });
   },
 
   fetchDashboard: async () => {
@@ -180,10 +197,18 @@ export const useStore = create<Store>((set, get) => ({
     set({ isIngesting: true, ingestStatus: 'idle', ingestMessage: '' });
     try {
       await client.post('/ingest', { rawText: text, source });
-      set({ isIngesting: false, ingestStatus: 'queued', ingestMessage: '🧠 AI is processing your text... pull down to refresh in ~30s' });
-      setTimeout(() => {
+      set({ isIngesting: false, ingestStatus: 'queued', ingestMessage: '🧠 AI is processing your text... pulling updates!' });
+      
+      // Auto-poll after a few seconds to let backend finish
+      setTimeout(async () => {
+        try {
+          await get().fetchDashboard();
+        } catch (e) {
+          console.warn('Auto-poll fetch failed', e);
+        }
         get().clearIngestStatus();
-      }, 4000);
+      }, 10000);
+      
     } catch (err: any) {
       console.error('[Store] ingestText failed:', err);
       set({ isIngesting: false, ingestStatus: 'error', ingestMessage: 'Sync failed. Try again.' });

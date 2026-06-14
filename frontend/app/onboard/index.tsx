@@ -1,8 +1,10 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, SafeAreaView, Dimensions, Animated } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Dimensions, Animated } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { theme } from '../../src/core/theme';
+import { useStore } from '../../src/core/store/useStore';
 
 const { width } = Dimensions.get('window');
 
@@ -30,12 +32,14 @@ const ONBOARDING_STEPS = [
 export default function OnboardingIndexScreen() {
   const router = useRouter();
   const [step, setStep] = useState(0);
+  const { completeOnboarding } = useStore();
 
-  const handleNext = () => {
+  const handleNext = async () => {
     if (step < ONBOARDING_STEPS.length - 1) {
       setStep(prev => prev + 1);
     } else {
-      router.push('/onboard/push');
+      await completeOnboarding();
+      router.replace('/');
     }
   };
 

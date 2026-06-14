@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { MaterialIcons } from '@expo/vector-icons';
-import { View, Text, TextInput, TouchableOpacity, ActivityIndicator, StyleSheet, KeyboardAvoidingView, Platform, ScrollView, Alert } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, ActivityIndicator, StyleSheet, KeyboardAvoidingView, Platform, ScrollView, Alert, Image } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useStore } from '../src/core/store/useStore';
 import { theme } from '../src/core/theme';
@@ -38,7 +38,11 @@ export default function LoginScreen() {
           
           <View style={styles.header}>
             <View style={styles.iconContainer}>
-              <MaterialIcons name="bolt" size={48} color={theme.colors.surface} />
+              <Image 
+                source={require('../assets/icon.png')} 
+                style={{ width: 80, height: 80, borderRadius: 24 }} 
+                resizeMode="cover" 
+              />
             </View>
             <Text style={styles.title}>
               <Text style={{ color: theme.colors.onSurface }}>Campus</Text>
@@ -137,10 +141,10 @@ const styles = StyleSheet.create({
   header: { alignItems: 'center', marginBottom: 40 },
   iconContainer: { 
     width: 80, height: 80, borderRadius: 24, 
-    backgroundColor: theme.colors.primary, 
     alignItems: 'center', justifyContent: 'center', 
     marginBottom: 24,
-    shadowColor: theme.colors.primary, shadowOpacity: 0.4, shadowRadius: 16, shadowOffset: { width: 0, height: 8 }, elevation: 8 
+    shadowColor: theme.colors.primary, shadowOpacity: 0.4, shadowRadius: 16, shadowOffset: { width: 0, height: 8 }, elevation: 8,
+    backgroundColor: '#fff' 
   },
   title: { ...theme.typography.displayLg, letterSpacing: -1, marginBottom: 8 },
   subtitle: { ...theme.typography.bodyLg, color: theme.colors.onSurfaceVariant, textAlign: 'center', paddingHorizontal: 20 },
