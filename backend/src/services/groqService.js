@@ -48,7 +48,24 @@ export const extractEvents = async (rawText) => {
   }
 };
 
-export const generateNudge = async (ev, studentName, hoursLeft) => {
+const buildPersona = (profile) => {
+  if (!profile) return 'a college student';
+  const { name, college, branch, year } = profile;
+  const parts = [];
+  if (year) parts.push(year);
+  if (branch) parts.push(branch);
+  const title = parts.length > 0 ? parts.join(' ') + ' student' : 'college student';
+  
+  let persona = `${name || 'a student'}`;
+  if (college) {
+    persona += `, a ${title} at ${college}`;
+  } else if (parts.length > 0) {
+    persona += `, a ${title}`;
+  }
+  return persona;
+};
+
+export const generateNudge = async (ev, profile, hoursLeft) => {
   const timeContext =
     hoursLeft < 1
       ? "less than an hour"
@@ -62,7 +79,7 @@ export const generateNudge = async (ev, studentName, hoursLeft) => {
     max_tokens: 200,
     messages: [{
       role: 'user',
-      content: `Write a short, friendly push notification (max 2 sentences) for a college student named ${studentName}.
+      content: `Write a short, friendly push notification (max 2 sentences) for ${buildPersona(profile)}.
 Event: ${ev.title}. Type: ${ev.type}. Hours remaining: ${timeContext}.
 Urgency: ${ev.urgency}. Be specific, warm, and action-oriented. No emojis.
 Return ONLY the notification text. No quotes, no preamble.`
@@ -71,7 +88,7 @@ Return ONLY the notification text. No quotes, no preamble.`
   return completion.choices[0].message.content.trim();
 };
 
-export const generateBriefing = async ({ studentName, healthScore, events, date }) => {
+export const generateBriefing = async ({ profile, healthScore, events, date }) => {
   const eventSummary = events.length > 0
       ? events.map((e) => `- ${e.title} (${e.urgency} urgency${e.timestamp ? `, due ${e.timestamp.slice(0, 10)}` : ""})`).join("\n")
       : "- No pending events today";
@@ -82,11 +99,24 @@ export const generateBriefing = async ({ studentName, healthScore, events, date 
     max_tokens: 350,
     messages: [{
       role: 'user',
-      content: `Write a warm, personal morning briefing (3-4 sentences) for ${studentName}, an Indian college student.
+      content: `Write a warm, personal morning briefing (3-4 sentences) for ${buildPersona(profile)}.
 Date: ${date}
 Today's pending events:\n${eventSummary}
 Health score: ${healthScore}/100.
 Be specific, human, and action-oriented. Mention the most critical item first. No emojis, flowing prose only.`
+    }],
+  });
+  return completion.choices[0].message.content.trim();
+};
+
+export const generatePositiveNudge = async (ev, profile) => {
+  const completion = await groq.chat.completions.create({
+    model: 'llama-3.3-70b-versatile',
+    temperature: 0.5,
+    max_tokens: 100,
+    messages: [{
+      role: 'user',
+      content: `Write a 1-sentence positive congratulation for ${buildPersona(profile)} for finishing a critical task (${ev.title}) a day early. Tell them to take a break. No emojis.`
     }],
   });
   return completion.choices[0].message.content.trim();

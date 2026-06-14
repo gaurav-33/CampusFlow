@@ -99,6 +99,14 @@ export function computeHealthScore(events = [], referenceTime = new Date()) {
   }
 
   const refMs = referenceTime.getTime();
+  const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+
+  // Filter out events older than 30 days to keep the score volatile and reflective of current behavior
+  const recentEvents = events.filter(e => {
+    if (!e.timestamp) return true; // keep TBA events
+    const eventTime = new Date(e.timestamp).getTime();
+    return (refMs - eventTime) <= THIRTY_DAYS_MS;
+  });
 
   // ── Counters ────────────────────────────────────────────────────────────────
   let pendingCritical = 0;
@@ -106,9 +114,23 @@ export function computeHealthScore(events = [], referenceTime = new Date()) {
   let pendingLow = 0;
   let proximityPenalty = 0;
   let completedCount = 0;
-  const totalCount = events.length;
+  const totalCount = recentEvents.length;
 
-  for (const event of events) {
+  if (totalCount === 0) {
+    // No recent events → perfect score
+    const band = getScoreBand(100);
+    return {
+      score: 100,
+      ...band,
+      breakdown: {
+        urgencyPenalty: 0, proximityPenalty: 0, completionBonus: 0,
+        pendingCritical: 0, pendingMedium: 0, pendingLow: 0,
+        completedCount: 0, totalCount: 0,
+      },
+    };
+  }
+
+  for (const event of recentEvents) {
     const isPending = event.status !== "completed";
     const urgency = (event.urgency || "low").toLowerCase();
     const eventMs = event.timestamp ? new Date(event.timestamp).getTime() : Infinity;

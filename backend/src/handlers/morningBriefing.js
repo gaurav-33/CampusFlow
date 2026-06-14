@@ -97,7 +97,7 @@ async function generateStudentBriefing(rawId, today) {
   let briefingText;
   try {
     briefingText = await generateBriefing({
-      studentName,
+      profile,
       healthScore,
       events: pendingEvents,
       date: today,

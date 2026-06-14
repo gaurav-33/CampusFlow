@@ -19,6 +19,23 @@ const bedrockClient = new BedrockRuntimeClient({
   region: process.env.BEDROCK_REGION || process.env.AWS_REGION || "ap-south-1",
 });
 
+const buildPersona = (profile) => {
+  if (!profile) return 'a college student';
+  const { name, college, branch, year } = profile;
+  const parts = [];
+  if (year) parts.push(year);
+  if (branch) parts.push(branch);
+  const title = parts.length > 0 ? parts.join(' ') + ' student' : 'college student';
+  
+  let persona = `${name || 'a student'}`;
+  if (college) {
+    persona += `, a ${title} at ${college}`;
+  } else if (parts.length > 0) {
+    persona += `, a ${title}`;
+  }
+  return persona;
+};
+
 const MODEL_ID =
   process.env.BEDROCK_MODEL_ID ||
   "anthropic.claude-3-sonnet-20240229-v1:0";
@@ -246,11 +263,11 @@ function sanitizeEvent(event) {
  * Called by the Rule Engine when a nudge rule fires on a new EVENT#.
  *
  * @param {{ title: string, type: string, urgency: string }} ev
- * @param {string} studentName
+ * @param {Object} profile
  * @param {number} hoursLeft
  * @returns {Promise<string>}
  */
-export async function generateNudge(ev, studentName, hoursLeft) {
+export const generateNudge = async (ev, profile, hoursLeft) => {
   const timeContext =
     hoursLeft < 1
       ? "less than an hour"
@@ -258,8 +275,8 @@ export async function generateNudge(ev, studentName, hoursLeft) {
         ? `${Math.round(hoursLeft)} hours`
         : `${Math.round(hoursLeft / 24)} day(s)`;
 
-  const prompt = `Write a short, warm push notification (max 2 sentences, max 140 characters total) for an Indian college student named ${studentName}.
-Event: "${ev.title}". Type: ${ev.type}. Time remaining: ${timeContext}. Urgency: ${ev.urgency}.
+  const prompt = `Write a short, friendly push notification (max 2 sentences) for ${buildPersona(profile)}.
+Event: ${ev.title}. Type: ${ev.type}. Hours remaining: ${timeContext}. Urgency: ${ev.urgency}.
 Rules: Be specific and action-oriented. Use the student's name once. No emojis. No quotes.
 Return ONLY the notification text.`;
 
@@ -292,10 +309,10 @@ Return ONLY the notification text.`;
  * Generates a warm, personalized morning briefing for a student.
  * Called by the Morning Briefing Lambda at 7:30 AM IST daily.
  *
- * @param {{ studentName: string, healthScore: number, events: Array, date: string }} opts
+ * @param {{ profile: Object, healthScore: number, events: Array, date: string }} opts
  * @returns {Promise<string>}
  */
-export async function generateBriefing({ studentName, healthScore, events, date }) {
+export const generateBriefing = async ({ profile, healthScore, events, date }) => {
   const eventSummary =
     events.length > 0
       ? events
@@ -306,7 +323,7 @@ export async function generateBriefing({ studentName, healthScore, events, date 
           .join("\n")
       : "- No pending events today";
 
-  const prompt = `Write a warm morning briefing (3-4 sentences) for an Indian college student named ${studentName}.
+  const prompt = `Write a warm, personal morning briefing (3-4 sentences) for ${buildPersona(profile)}.
 Date: ${date}. Academic Health Score: ${healthScore}/100.
 Pending events:\n${eventSummary}
 Rules: Mention the student's name once at the start. Highlight the most critical item. End with a brief motivational sentence. No emojis, flowing prose only. Max 250 words.
@@ -331,6 +348,29 @@ Return ONLY the briefing text.`;
   const body = JSON.parse(new TextDecoder("utf-8").decode(response.body));
   return (
     body.content?.[0]?.text?.trim() ||
-    `Good morning, ${studentName}! Check your dashboard for today's events. Academic health score: ${healthScore}/100. Have a productive day!`
+    `Good morning, ${profile.name}! Check your dashboard for today's events. Academic health score: ${healthScore}/100. Have a productive day!`
   );
+}
+
+export const generatePositiveNudge = async (ev, profile) => {
+  const prompt = `Write a 1-sentence positive congratulation for ${buildPersona(profile)} for finishing a critical task (${ev.title}) early. Tell them to take a break. No emojis.`;
+
+  const requestBody = {
+    anthropic_version: "bedrock-2023-05-31",
+    max_tokens: 150,
+    temperature: 0.5,
+    messages: [{ role: "user", content: prompt }],
+  };
+
+  const response = await bedrockClient.send(
+    new InvokeModelCommand({
+      modelId: MODEL_ID,
+      contentType: "application/json",
+      accept: "application/json",
+      body: JSON.stringify(requestBody),
+    })
+  );
+
+  const body = JSON.parse(new TextDecoder("utf-8").decode(response.body));
+  return body.content?.[0]?.text?.trim() || "Great job finishing your task early!";
 }

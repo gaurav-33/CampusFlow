@@ -437,6 +437,35 @@ Resources:
         External:
           - '@aws-sdk/*'
 
+  # ── Lambda: Update Event ────────────────────────────────────────────────
+  UpdateEventFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub CampusFlow-UpdateEvent-${Environment}
+      CodeUri: ./
+      Handler: updateEvent.handler
+      Role: !GetAtt CampusFlowLambdaRole.Arn
+      Description: Mark event as done, calc hoursAhead, trigger positive nudge
+      Events:
+        UpdateEventHttp:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CampusFlowApi
+            Method: PATCH
+            Path: /api/event
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Format: cjs
+        OutExtension:
+          - .js=.cjs
+        Target: es2022
+        Sourcemap: false
+        EntryPoints:
+          - src/handlers/updateEvent.js
+        External:
+          - '@aws-sdk/*'
+
   # ── Lambda: SQS Batch Processor (Bedrock) ──────────────────────────────────
   ProcessSqsBatchFunction:
     Type: AWS::Serverless::Function

@@ -107,7 +107,6 @@ async function processStreamRecord(record) {
 
   // ── Fetch full student context ──────────────────────────────────────────────
   const { profile, events } = await getStudentData(rawId);
-  const studentName = profile?.name || "Student";
 
   // ── Generate nudge if rules fire ────────────────────────────────────────────
   if (shouldNudge && profile) {
@@ -115,7 +114,7 @@ async function processStreamRecord(record) {
 
     let nudgeText;
     try {
-      nudgeText = await generateNudge(ev, studentName, Math.round(hoursLeft));
+      nudgeText = await generateNudge(ev, profile, Math.round(hoursLeft));
     } catch (err) {
       console.error("[RuleEngine] Bedrock nudge generation failed:", err.message);
       nudgeText = `Reminder: ${ev.title} is coming up. Stay on top of it!`;
