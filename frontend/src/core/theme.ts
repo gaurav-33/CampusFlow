@@ -1,0 +1,65 @@
+export const theme = {
+  colors: {
+    primary: '#004ac6',
+    surface: '#ffffff',
+    surfaceContainerLowest: '#ffffff',
+    surfaceContainerLow: '#f0f3ff',
+    surfaceContainerHigh: '#dee8ff',
+    onSurface: '#111c2d',
+    onSurfaceVariant: '#434655',
+    error: '#ba1a1a',
+    secondary: '#505f76',
+    outlineVariant: '#c3c6d7',
+    primaryContainer: '#2563eb',
+    background: '#f9f9ff',
+  },
+  spacing: {
+    xs: 4,
+    sm: 8,
+    md: 16,
+    lg: 24,
+    xl: 32,
+    gutter: 16,
+  },
+  borderRadius: {
+    DEFAULT: 4,
+    lg: 8,
+    xl: 12,
+    full: 9999,
+  },
+  typography: {
+    displayLg: {
+      fontSize: 36,
+      lineHeight: 44,
+      fontWeight: '700' as const,
+      letterSpacing: -0.72,
+    },
+    headlineLg: {
+      fontSize: 28,
+      lineHeight: 36,
+      fontWeight: '600' as const,
+      letterSpacing: -0.28,
+    },
+    headlineMd: {
+      fontSize: 20,
+      lineHeight: 28,
+      fontWeight: '600' as const,
+    },
+    labelMd: {
+      fontSize: 12,
+      lineHeight: 16,
+      fontWeight: '600' as const,
+      letterSpacing: 0.6,
+    },
+    bodyLg: {
+      fontSize: 16,
+      lineHeight: 28,
+      fontWeight: '400' as const,
+    },
+    bodyMd: {
+      fontSize: 14,
+      lineHeight: 22,
+      fontWeight: '400' as const,
+    },
+  },
+} as const;

@@ -12,11 +12,11 @@ export const extractEvents = async (rawText) => {
   return bedrock.extractEvents(rawText);
 };
 
-export const generateNudge = async (ev, studentName, hoursLeft) => {
+export const generateNudge = async (ev, profile, hoursLeft) => {
   console.info(`[AIService] Using provider: ${provider} for generateNudge`);
-  if (provider === 'groq') return groq.generateNudge(ev, studentName, hoursLeft);
+  if (provider === 'groq') return groq.generateNudge(ev, profile, hoursLeft);
   // Default to Bedrock
-  return bedrock.generateNudge(ev, studentName, hoursLeft);
+  return bedrock.generateNudge(ev, profile, hoursLeft);
 };
 
 export const generateBriefing = async (opts) => {
@@ -24,4 +24,11 @@ export const generateBriefing = async (opts) => {
   if (provider === 'groq') return groq.generateBriefing(opts);
   // Default to Bedrock
   return bedrock.generateBriefing(opts);
+};
+
+export const generatePositiveNudge = async (ev, profile) => {
+  console.info(`[AIService] Using provider: ${provider} for generatePositiveNudge`);
+  if (provider === 'groq') return groq.generatePositiveNudge(ev, profile);
+  // Default to Bedrock
+  return bedrock.generatePositiveNudge(ev, profile);
 };

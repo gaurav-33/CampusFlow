@@ -85,7 +85,8 @@ export const handler = async (event) => {
 
   // ── Sort upcoming events (chronological, then by urgency) ─────────────────
   const urgencyOrder = { critical: 0, medium: 1, low: 2 };
-  const upcomingEvents = [...events]
+  const upcomingEvents = events
+    .filter(e => e.status !== 'completed')
     .sort((a, b) => {
       const tsA = a.timestamp ? new Date(a.timestamp).getTime() : Infinity;
       const tsB = b.timestamp ? new Date(b.timestamp).getTime() : Infinity;
@@ -93,6 +94,16 @@ export const handler = async (event) => {
       return (urgencyOrder[a.urgency] ?? 3) - (urgencyOrder[b.urgency] ?? 3);
     })
     .map(({ PK, SK, GSI1PK, GSI1SK, entityType, ...rest }) => rest); // Strip DynamoDB internals
+
+  // ── Sort completed events (most recently completed first) ───────────────────
+  const completedEvents = events
+    .filter(e => e.status === 'completed')
+    .sort((a, b) => {
+      const tsA = new Date(a.completedAt || a.timestamp || 0).getTime();
+      const tsB = new Date(b.completedAt || b.timestamp || 0).getTime();
+      return tsB - tsA; // latest first
+    })
+    .map(({ PK, SK, GSI1PK, GSI1SK, entityType, ...rest }) => rest);
 
   // ── Select top 3 nudges (most urgent pending events) ─────────────────────
   const recentNudges = selectNudges(events, 3).map(
@@ -111,6 +122,7 @@ export const handler = async (event) => {
       color: healthScoreResult.color,
     },
     upcomingEvents,
+    completedEvents,
     recentNudges,
     nudges,
     briefing: briefing ? { briefingText: briefing.briefingText, generatedAt: briefing.generatedAt } : null,
