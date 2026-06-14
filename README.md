@@ -98,6 +98,48 @@ Once the backend is deployed, you will receive an `ApiBaseUrl` in the CloudForma
 
 ---
 
+## 🔌 API Documentation
+
+All protected endpoints require an `Authorization: Bearer <token>` header.
+
+### Authentication
+- `POST /api/auth/register`
+  - **Body**: `{ "studentId": "string", "name": "string", "password": "string" }`
+  - **Returns**: `{ "token": "jwt-token", "studentId": "string", "name": "string" }`
+- `POST /api/auth/login`
+  - **Body**: `{ "studentId": "string", "password": "string" }`
+  - **Returns**: `{ "token": "jwt-token", "studentId": "string", "name": "string" }`
+
+### Dashboard & Events
+- `GET /api/dashboard`
+  - **Description**: Fetches the user's unified academic profile, upcoming events, health score, nudges, and daily briefing.
+  - **Returns**: Complex JSON object with `profile`, `upcomingEvents`, `healthScore`, `nudges`, `briefing`.
+- `GET /api/events/{eventId}`
+  - **Description**: Fetch specific details for a single event.
+  - **Returns**: Event details JSON.
+- `PATCH /api/event`
+  - **Body**: `{ "eventSk": "string", "studentId": "string" }`
+  - **Description**: Marks an event as completed and recalculates the academic health score.
+  - **Returns**: `{ "message": "Event marked done", "newScore": number }`
+
+### AI Ingestion & Uploads
+- `POST /api/ingest`
+  - **Body**: `{ "rawText": "string", "source": "DIRECT_TEXT" | "SHARE_TARGET" }`
+  - **Description**: Submits unstructured text to the AI processing queue.
+  - **Returns**: `{ "message": "Queued for processing", "jobId": "uuid" }`
+- `POST /api/upload/presign`
+  - **Body**: `{ "contentType": "application/pdf" | "image/jpeg", "fileSizeBytes": number }`
+  - **Description**: Requests a secure S3 presigned URL to upload timetable/syllabus files directly from the device.
+  - **Returns**: `{ "uploadUrl": "https://s3...", "key": "string" }`
+
+### Profile Management
+- `PATCH /api/profile`
+  - **Body**: `{ "college"?: "string", "branch"?: "string", "year"?: "string", "expoPushToken"?: "string" }`
+  - **Description**: Updates the student's profile metadata and push notification configuration.
+  - **Returns**: `{ "message": "Profile updated" }`
+
+---
+
 ## 📦 Deployment
 
 ### Building for Production
