@@ -14,7 +14,7 @@
  * }
  */
 
-import { getStudentData } from "../services/dynamoService.js";
+import { queryByPK } from "../services/dynamoService.js";
 import { computeHealthScore, selectNudges } from "../utils/healthScoreCalc.js";
 
 // ── CORS Headers ──────────────────────────────────────────────────────────────
@@ -54,11 +54,21 @@ export const handler = async (event) => {
   console.info(`[DashboardHandler] GET /api/dashboard for ${studentId}`);
 
   // ── Fetch student data from DynamoDB ────────────────────────────────────────
-  let profile, events;
+  let profile, events, nudges, briefing;
   try {
-    const data = await getStudentData(rawId);
-    profile = data.profile;
-    events = data.events;
+    const items = await queryByPK(rawId);
+    const today = new Date().toISOString().slice(0, 10);
+
+    profile = items.find((i) => i.SK === "PROFILE") || null;
+    events = items
+      .filter((i) => i.SK.startsWith("EVENT#"))
+      .map((e) => ({ ...e, eventId: e.SK }));
+    nudges = items
+      .filter((i) => i.SK.startsWith("NUDGE#"))
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .slice(0, 10)
+      .map(({ PK, SK, entityType, ...rest }) => ({ ...rest, nudgeId: SK }));
+    briefing = items.find((i) => i.SK === `BRIEFING#${today}`) || null;
   } catch (err) {
     console.error("[DashboardHandler] DynamoDB query failed:", err);
     return response(500, { error: "Failed to fetch dashboard data" });
@@ -102,6 +112,8 @@ export const handler = async (event) => {
     },
     upcomingEvents,
     recentNudges,
+    nudges,
+    briefing: briefing ? { briefingText: briefing.briefingText, generatedAt: briefing.generatedAt } : null,
     healthScore: healthScoreResult,
     meta: {
       totalEvents: events.length,
