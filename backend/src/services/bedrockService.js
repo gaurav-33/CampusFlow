@@ -238,3 +238,99 @@ function sanitizeEvent(event) {
 
   return { title, timestamp, type, urgency };
 }
+
+// ── Nudge Generation ──────────────────────────────────────────────────────────
+
+/**
+ * Generates a short, personalized push notification text.
+ * Called by the Rule Engine when a nudge rule fires on a new EVENT#.
+ *
+ * @param {{ title: string, type: string, urgency: string }} ev
+ * @param {string} studentName
+ * @param {number} hoursLeft
+ * @returns {Promise<string>}
+ */
+export async function generateNudge(ev, studentName, hoursLeft) {
+  const timeContext =
+    hoursLeft < 1
+      ? "less than an hour"
+      : hoursLeft < 24
+        ? `${Math.round(hoursLeft)} hours`
+        : `${Math.round(hoursLeft / 24)} day(s)`;
+
+  const prompt = `Write a short, warm push notification (max 2 sentences, max 140 characters total) for an Indian college student named ${studentName}.
+Event: "${ev.title}". Type: ${ev.type}. Time remaining: ${timeContext}. Urgency: ${ev.urgency}.
+Rules: Be specific and action-oriented. Use the student's name once. No emojis. No quotes.
+Return ONLY the notification text.`;
+
+  const requestBody = {
+    anthropic_version: "bedrock-2023-05-31",
+    max_tokens: 200,
+    temperature: 0.4,
+    messages: [{ role: "user", content: prompt }],
+  };
+
+  const response = await bedrockClient.send(
+    new InvokeModelCommand({
+      modelId: MODEL_ID,
+      contentType: "application/json",
+      accept: "application/json",
+      body: JSON.stringify(requestBody),
+    })
+  );
+
+  const body = JSON.parse(new TextDecoder("utf-8").decode(response.body));
+  return (
+    body.content?.[0]?.text?.trim() ||
+    `Reminder: ${ev.title} is coming up. Don't miss it!`
+  );
+}
+
+// ── Morning Briefing Generation ───────────────────────────────────────────────
+
+/**
+ * Generates a warm, personalized morning briefing for a student.
+ * Called by the Morning Briefing Lambda at 7:30 AM IST daily.
+ *
+ * @param {{ studentName: string, healthScore: number, events: Array, date: string }} opts
+ * @returns {Promise<string>}
+ */
+export async function generateBriefing({ studentName, healthScore, events, date }) {
+  const eventSummary =
+    events.length > 0
+      ? events
+          .map(
+            (e) =>
+              `- ${e.title} (${e.urgency} urgency${e.timestamp ? `, due ${e.timestamp.slice(0, 10)}` : ""})`
+          )
+          .join("\n")
+      : "- No pending events today";
+
+  const prompt = `Write a warm morning briefing (3-4 sentences) for an Indian college student named ${studentName}.
+Date: ${date}. Academic Health Score: ${healthScore}/100.
+Pending events:\n${eventSummary}
+Rules: Mention the student's name once at the start. Highlight the most critical item. End with a brief motivational sentence. No emojis, flowing prose only. Max 250 words.
+Return ONLY the briefing text.`;
+
+  const requestBody = {
+    anthropic_version: "bedrock-2023-05-31",
+    max_tokens: 400,
+    temperature: 0.5,
+    messages: [{ role: "user", content: prompt }],
+  };
+
+  const response = await bedrockClient.send(
+    new InvokeModelCommand({
+      modelId: MODEL_ID,
+      contentType: "application/json",
+      accept: "application/json",
+      body: JSON.stringify(requestBody),
+    })
+  );
+
+  const body = JSON.parse(new TextDecoder("utf-8").decode(response.body));
+  return (
+    body.content?.[0]?.text?.trim() ||
+    `Good morning, ${studentName}! Check your dashboard for today's events. Academic health score: ${healthScore}/100. Have a productive day!`
+  );
+}

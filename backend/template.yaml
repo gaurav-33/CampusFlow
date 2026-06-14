@@ -22,10 +22,16 @@ Globals:
         SQS_QUEUE_URL: !Ref BedrockProcessingQueue
         BEDROCK_MODEL_ID: anthropic.claude-3-sonnet-20240229-v1:0
         BEDROCK_REGION: ap-south-1
+        AI_PROVIDER: groq
+        GROQ_API_KEY: !Ref GroqApiKey
         JWT_SECRET: !Ref JwtSecret
         JWT_EXPIRES_IN: 24h
         NODE_ENV: production
         LOG_LEVEL: info
+        SNS_TOPIC_ARN: !Ref CampusFlowNudgeTopic
+        UPLOADS_BUCKET: !Sub 'campusflow-uploads-${AWS::AccountId}-${Environment}'
+        EMAIL_BUCKET: !Sub 'campusflow-uploads-${AWS::AccountId}-${Environment}'
+        SYNC_EMAIL_DOMAIN: sync.campusflow.com
     # Use ES Modules
     Handler: index.handler
 
@@ -38,6 +44,11 @@ Parameters:
       Generate: node -e "console.log(require('crypto').randomBytes(64).toString('hex'))"
     MinLength: 32
     NoEcho: true   # Never shown in CloudFormation console
+
+  GroqApiKey:
+    Type: String
+    Description: Groq API Key (gsk_...)
+    NoEcho: true
 
   Environment:
     Type: String
@@ -85,6 +96,11 @@ Resources:
               KeyType: RANGE
           Projection:
             ProjectionType: ALL
+      StreamSpecification:
+        StreamViewType: NEW_IMAGE    # DynamoDB Streams — Rule Engine reads new EVENT# records
+      TimeToLiveSpecification:
+        AttributeName: ttl           # Used by UPLOAD_COUNT# records to auto-expire daily
+        Enabled: true
       Tags:
         - Key: Project
           Value: CampusFlow
@@ -171,6 +187,56 @@ Resources:
                   - bedrock:InvokeModel
                 Resource:
                   - 'arn:aws:bedrock:*::foundation-model/anthropic.claude-3-sonnet*'
+
+        - PolicyName: S3UploadsAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:GetObjectAcl
+                Resource:
+                  - !Sub 'arn:aws:s3:::campusflow-uploads-${AWS::AccountId}-${Environment}/*'
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                Resource:
+                  - !Sub 'arn:aws:s3:::campusflow-uploads-${AWS::AccountId}-${Environment}/uploads/*'
+
+        - PolicyName: TextractAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - textract:DetectDocumentText
+                  - textract:AnalyzeDocument
+                Resource: '*'
+
+        - PolicyName: SNSPublish
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sns:Publish
+                Resource:
+                  - !Ref CampusFlowNudgeTopic
+
+        - PolicyName: DynamoDBStreams
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetRecords
+                  - dynamodb:GetShardIterator
+                  - dynamodb:DescribeStream
+                  - dynamodb:ListStreams
+                Resource:
+                  - !GetAtt CampusFlowTable.StreamArn
 
         - PolicyName: CloudWatchLogs
           PolicyDocument:
@@ -401,6 +467,250 @@ Resources:
         Sourcemap: false
         EntryPoints:
           - src/handlers/processSqsBatch.js
+        External:
+          - '@aws-sdk/*'
+
+  # ── SNS: Nudge Notification Topic ──────────────────────────────────────────
+  CampusFlowNudgeTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub CampusFlowNudges-${Environment}
+      DisplayName: CampusFlow Student Nudges
+      Tags:
+        - Key: Project
+          Value: CampusFlow
+
+  # ── S3: Uploads Bucket (PDF timetables + SES emails) ──────────────────────
+  CampusFlowUploadsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub campusflow-uploads-${AWS::AccountId}-${Environment}
+      # Block all public access — presigned URLs bypass this for authorized uploads only
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      CorsConfiguration:
+        CorsRules:
+          - AllowedHeaders: ['*']
+            AllowedMethods: [PUT, GET]
+            AllowedOrigins: ['*']
+            MaxAge: 3000
+      LifecycleConfiguration:
+        Rules:
+          - Id: DeleteStagedFilesAfter7Days
+            Status: Enabled
+            ExpirationInDays: 7    # Raw files auto-deleted after processing window
+          - Id: AbortIncompleteMultipartUploads
+            Status: Enabled
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 1  # Kill abandoned multipart uploads after 1 day
+      Tags:
+        - Key: Project
+          Value: CampusFlow
+
+
+  # ── Lambda: PDF Ingest (S3 trigger) ────────────────────────────────────────
+  IngestPdfFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub CampusFlow-IngestPdf-${Environment}
+      CodeUri: ./
+      Handler: ingestPdf.handler
+      Role: !GetAtt CampusFlowLambdaRole.Arn
+      Description: Triggered by S3 PUT on uploads bucket — Textract OCR → SQS
+      MemorySize: 512
+      Timeout: 60
+      Events:
+        S3UploadTrigger:
+          Type: S3
+          Properties:
+            Bucket: !Ref CampusFlowUploadsBucket
+            Events: s3:ObjectCreated:*
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: prefix
+                    Value: uploads/
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Format: cjs
+        OutExtension:
+          - .js=.cjs
+        Target: es2022
+        Sourcemap: false
+        EntryPoints:
+          - src/handlers/ingestPdf.js
+        External:
+          - '@aws-sdk/*'
+
+  # ── Lambda: Email Ingest (SES / S3 trigger) ────────────────────────────────
+  # SES writes raw email to S3, then we trigger this Lambda via S3 event
+  # on a separate prefix: ses-emails/
+  IngestEmailFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub CampusFlow-IngestEmail-${Environment}
+      CodeUri: ./
+      Handler: ingestEmail.handler
+      Role: !GetAtt CampusFlowLambdaRole.Arn
+      Description: Triggered by SES inbound emails stored in S3 — parses MIME → SQS
+      MemorySize: 256
+      Timeout: 30
+      Events:
+        SesEmailTrigger:
+          Type: S3
+          Properties:
+            Bucket: !Ref CampusFlowUploadsBucket
+            Events: s3:ObjectCreated:*
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: prefix
+                    Value: ses-emails/
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Format: cjs
+        OutExtension:
+          - .js=.cjs
+        Target: es2022
+        Sourcemap: false
+        EntryPoints:
+          - src/handlers/ingestEmail.js
+        External:
+          - '@aws-sdk/*'
+          - mailparser    # Include mailparser in Lambda bundle (npm dep)
+
+  # ── Lambda: Get Upload Presigned URL ───────────────────────────────────────
+  GetUploadUrlFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub CampusFlow-GetUploadUrl-${Environment}
+      CodeUri: ./
+      Handler: getUploadUrl.handler
+      Role: !GetAtt CampusFlowLambdaRole.Arn
+      Description: Returns a presigned S3 PUT URL for PDF/image uploads
+      MemorySize: 128
+      Timeout: 10
+      Events:
+        PresignEvent:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CampusFlowApi
+            Method: POST
+            Path: /api/upload/presign
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Format: cjs
+        OutExtension:
+          - .js=.cjs
+        Target: es2022
+        Sourcemap: false
+        EntryPoints:
+          - src/handlers/getUploadUrl.js
+        External:
+          - '@aws-sdk/*'
+
+  # ── Lambda: Update Profile ─────────────────────────────────────────────────
+  UpdateProfileFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub CampusFlow-UpdateProfile-${Environment}
+      CodeUri: ./
+      Handler: updateProfile.handler
+      Role: !GetAtt CampusFlowLambdaRole.Arn
+      Description: PATCH /api/profile — save Expo push token and student metadata
+      MemorySize: 128
+      Timeout: 10
+      Events:
+        UpdateProfileEvent:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CampusFlowApi
+            Method: PATCH
+            Path: /api/profile
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Format: cjs
+        OutExtension:
+          - .js=.cjs
+        Target: es2022
+        Sourcemap: false
+        EntryPoints:
+          - src/handlers/updateProfile.js
+        External:
+          - '@aws-sdk/*'
+
+  # ── Lambda: Rule Engine (DynamoDB Streams) ─────────────────────────────────
+  RuleEngineFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub CampusFlow-RuleEngine-${Environment}
+      CodeUri: ./
+      Handler: ruleEngine.handler
+      Role: !GetAtt CampusFlowLambdaRole.Arn
+      Description: DynamoDB Streams consumer — evaluates nudge rules, calls Bedrock, fires SNS push
+      MemorySize: 256
+      Timeout: 60
+      Events:
+        DynamoStreamTrigger:
+          Type: DynamoDB
+          Properties:
+            Stream: !GetAtt CampusFlowTable.StreamArn
+            StartingPosition: LATEST
+            BatchSize: 10
+            MaximumBatchingWindowInSeconds: 5
+            FilterCriteria:
+              Filters:
+                - Pattern: '{"eventName":["INSERT"]}'
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Format: cjs
+        OutExtension:
+          - .js=.cjs
+        Target: es2022
+        Sourcemap: false
+        EntryPoints:
+          - src/handlers/ruleEngine.js
+        External:
+          - '@aws-sdk/*'
+
+  # ── Lambda: Morning Briefing (EventBridge cron) ────────────────────────────
+  MorningBriefingFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub CampusFlow-MorningBriefing-${Environment}
+      CodeUri: ./
+      Handler: morningBriefing.handler
+      Role: !GetAtt CampusFlowLambdaRole.Arn
+      Description: Daily 7:30 AM IST briefing — generates personalized AI briefing for all students
+      MemorySize: 512
+      Timeout: 300    # 5 minutes — runs for all students
+      Events:
+        DailyBriefingCron:
+          Type: Schedule
+          Properties:
+            # 7:30 AM IST = 2:00 AM UTC
+            Schedule: cron(0 2 * * ? *)
+            Name: !Sub CampusFlow-MorningBriefing-${Environment}
+            Description: Daily morning briefing generation at 7:30 AM IST
+            Enabled: true
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Format: cjs
+        OutExtension:
+          - .js=.cjs
+        Target: es2022
+        Sourcemap: false
+        EntryPoints:
+          - src/handlers/morningBriefing.js
         External:
           - '@aws-sdk/*'
 

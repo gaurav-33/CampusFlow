@@ -16,7 +16,7 @@
  *  not the entire batch. Requires FunctionResponseTypes: [ReportBatchItemFailures].
  */
 
-import { extractEvents } from "../services/bedrockService.js";
+import { extractEvents } from "../services/aiService.js";
 import {
   putEvent,
   getStudentData,

@@ -307,3 +307,149 @@ export async function markEventCompleted(studentId, sk) {
 
   return docClient.send(cmd);
 }
+
+// ── Nudge Records ─────────────────────────────────────────────────────────────
+
+/**
+ * Writes a NUDGE# record to DynamoDB.
+ * Called by the Rule Engine after Bedrock generates nudge text.
+ *
+ * @param {string} studentId - Raw student ID
+ * @param {{ eventRef: string, nudgeText: string, urgency: string, eventType: string, eventSK: string }} nudge
+ */
+export async function putNudge(studentId, nudge) {
+  const PK = makeStudentPK(studentId);
+  const now = new Date().toISOString();
+  const SK = `NUDGE#${now}`;
+
+  const item = {
+    PK,
+    SK,
+    entityType: "NUDGE",
+    eventRef: nudge.eventRef,
+    nudgeText: nudge.nudgeText,
+    urgency: nudge.urgency || "low",
+    eventType: nudge.eventType || "other",
+    eventSK: nudge.eventSK,
+    read: false,
+    createdAt: now,
+  };
+
+  return putItem(item);
+}
+
+// ── Briefing Records ──────────────────────────────────────────────────────────
+
+/**
+ * Writes or overwrites a BRIEFING#{date} record for a student.
+ * Safe to re-run — overwrites today's briefing if already generated.
+ *
+ * @param {string} studentId - Raw student ID
+ * @param {string} date - ISO date string YYYY-MM-DD
+ * @param {string} briefingText - Generated briefing text from Bedrock
+ */
+export async function putBriefing(studentId, date, briefingText) {
+  const PK = makeStudentPK(studentId);
+  const SK = `BRIEFING#${date}`;
+  const now = new Date().toISOString();
+
+  const item = {
+    PK,
+    SK,
+    entityType: "BRIEFING",
+    briefingText,
+    date,
+    generatedAt: now,
+  };
+
+  return putItem(item);
+}
+
+// ── Flexible Profile Update ───────────────────────────────────────────────────
+
+/**
+ * Updates arbitrary allowed fields on the student PROFILE item.
+ * Used by updateProfile.js handler for push token registration and metadata updates.
+ *
+ * @param {string} studentId - Raw student ID
+ * @param {Object} fields - Key-value pairs to update (already validated by handler)
+ */
+export async function updateStudentProfile(studentId, fields) {
+  const PK = makeStudentPK(studentId);
+  const now = new Date().toISOString();
+
+  const expressionParts = ["#updatedAt = :updatedAt"];
+  const expressionValues = { ":updatedAt": now };
+  const expressionNames = { "#updatedAt": "updatedAt" };
+
+  for (const [key, value] of Object.entries(fields)) {
+    const placeholder = `#f_${key}`;
+    const valuePlaceholder = `:v_${key}`;
+    expressionParts.push(`${placeholder} = ${valuePlaceholder}`);
+    expressionValues[valuePlaceholder] = value;
+    expressionNames[placeholder] = key;
+  }
+
+  const cmd = new UpdateCommand({
+    TableName: TABLE_NAME,
+    Key: { PK, SK: "PROFILE" },
+    UpdateExpression: `SET ${expressionParts.join(", ")}`,
+    ExpressionAttributeNames: expressionNames,
+    ExpressionAttributeValues: expressionValues,
+    ReturnValues: "ALL_NEW",
+  });
+
+  const result = await docClient.send(cmd);
+  return result.Attributes;
+}
+
+// ── Upload Rate Limiting ───────────────────────────────────────────────────────
+
+/**
+ * Atomically increments a per-student upload counter for today.
+ * Uses DynamoDB's atomic ADD operation — race-condition safe.
+ *
+ * Key format:  PK = STUDENT#<id>  SK = UPLOAD_COUNT#<YYYY-MM-DD>
+ * TTL is set to 48 hours from now so DynamoDB auto-deletes stale counters.
+ *
+ * @param {string} studentId - Raw student ID
+ * @param {number} limit - Maximum uploads allowed per day
+ * @returns {{ allowed: boolean, currentCount: number, remaining: number }}
+ */
+export async function checkAndIncrementUploadCount(studentId, limit) {
+  const PK = makeStudentPK(studentId);
+  const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+  const SK = `UPLOAD_COUNT#${today}`;
+
+  // TTL = midnight of tomorrow + 24 hours buffer (48 hours from now total)
+  const ttlSeconds = Math.floor(Date.now() / 1000) + 172800; // 48 hours
+
+  // Atomic increment — ADD initialises to 0 if the item doesn't exist
+  const cmd = new UpdateCommand({
+    TableName: TABLE_NAME,
+    Key: { PK, SK },
+    UpdateExpression: "ADD #count :inc SET #ttl = if_not_exists(#ttl, :ttl), #date = if_not_exists(#date, :date)",
+    ExpressionAttributeNames: {
+      "#count": "count",
+      "#ttl": "ttl",
+      "#date": "date",
+    },
+    ExpressionAttributeValues: {
+      ":inc": 1,
+      ":ttl": ttlSeconds,
+      ":date": today,
+    },
+    ReturnValues: "ALL_NEW",
+  });
+
+  const result = await docClient.send(cmd);
+  const currentCount = result.Attributes?.count ?? 1;
+  const remaining = Math.max(0, limit - currentCount);
+  const allowed = currentCount <= limit;
+
+  console.info(
+    `[RateLimit] Upload count for ${studentId} on ${today}: ${currentCount}/${limit} (allowed: ${allowed})`
+  );
+
+  return { allowed, currentCount, remaining, date: today };
+}
